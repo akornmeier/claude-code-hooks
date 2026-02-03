@@ -2,6 +2,46 @@
 
 This guide documents the plan format used by orchestrating agents to provide clear direction to builder and validator sub-agents.
 
+## Self-Validating Agent Architecture
+
+The power of this system comes from **self-validating agents** - agents that cannot complete without passing quality gates. There are two layers of validation:
+
+### Plan Validation (Structure)
+Ensures plans contain required sections before the planner can finish:
+```yaml
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: validate_new_file.py --directory specs --extension .md
+        - type: command
+          command: validate_file_contains.py --contains '## Task Description' --contains '## Team Orchestration'
+```
+
+### Code Quality Validation (Implementation)
+Ensures code meets standards before builders can proceed:
+```yaml
+hooks:
+  PreToolUse:
+    - matcher: "Write|Edit"
+      hooks:
+        - type: command
+          command: tdd_enforcer.py  # Must write test first
+  PostToolUse:
+    - matcher: "Write|Edit"
+      hooks:
+        - type: command
+          command: oxlint_validator.py  # Lint must pass
+        - type: command
+          command: tsc_validator.py     # Types must check
+  Stop:
+    - hooks:
+        - type: command
+          command: coverage_validator.py  # Coverage must meet threshold
+```
+
+---
+
 ## Core Principle: Plans Are Executable Specifications
 
 A plan is not just documentation—it's an **executable specification** that an orchestrating agent uses to:
@@ -9,6 +49,20 @@ A plan is not just documentation—it's an **executable specification** that an 
 2. Deploy specialized agents to execute those tasks
 3. Track dependencies and progress
 4. Validate completion against acceptance criteria
+
+### Why This Matters
+
+> "You want to be teaching your agents how to build like you would."
+
+The difference between **agentic engineering** and **vibe coding** is knowing the outcome your agent will generate. Template meta-prompts create plans in a highly vetted, consistent format - ensuring predictable, high-quality results.
+
+### Communication Through Task List
+
+The task list is the **communication backbone** for agent teams:
+- Agents don't run ad-hoc without a common mission
+- Task dependencies ensure proper ordering
+- Each agent knows when work is/isn't done
+- Primary agent orchestrates, never codes directly
 
 ```
 ┌─────────────────────────────────────────────────────────────┐

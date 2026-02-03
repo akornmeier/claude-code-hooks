@@ -65,6 +65,22 @@ The core innovation is **self-validating agents** - agents that cannot complete 
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### Two Layers of Validation
+
+| Layer | Purpose | Validators |
+|-------|---------|------------|
+| **Plan Validation** | Ensure plans have required structure | `validate_new_file.py`, `validate_file_contains.py` |
+| **Code Quality** | Ensure code meets engineering standards | `tdd_enforcer.py`, `oxlint_validator.py`, `tsc_validator.py`, `coverage_validator.py` |
+
+**Plan validators** ensure the orchestrating agent creates well-formed plans with required sections.
+**Code quality validators** ensure builder agents produce production-ready code.
+
+### Why This Matters
+
+> "You want to be teaching your agents how to build like you would."
+
+The difference between **agentic engineering** and **vibe coding** is knowing the outcome your agent will generate. Self-validating agents with templated plans create predictable, high-quality results.
+
 ---
 
 ## Hook Validators
