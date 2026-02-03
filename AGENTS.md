@@ -11,36 +11,78 @@ This repository contains self-validating agents and orchestration patterns for C
 
 ---
 
-## Architecture
+## Layered Architecture
+
+The system uses a **layered architecture** where user-level components provide the foundation, and project-level agents extend with domain-specific specializations.
 
 ```
-~/.claude/                     # User-level (shared across projects)
-├── agents/                    # Agent definitions
-│   ├── tdd-builder.md         # TDD-enforced builder with all gates
-│   ├── ts-builder.md          # Standard builder with lint/type gates
-│   ├── ts-validator.md        # Read-only verification agent
-│   ├── turborepo-runner.md    # Monorepo orchestration
-│   └── coverage-checker.md    # Coverage validation
-├── hooks/
-│   └── validators/
-│       ├── tdd_enforcer.py        # PreToolUse: blocks impl without test
-│       ├── session_start_tdd.py   # SessionStart: resets TDD state
-│       ├── oxlint_validator.py    # PostToolUse: lint validation
-│       ├── tsc_validator.py       # PostToolUse: type validation
-│       └── coverage_validator.py  # Stop: coverage threshold gate
-└── data/
-    └── tdd_session_state.json     # TDD session tracking
-
-~/code/stached/.claude/agents/     # Stached-specific
-├── convex-builder.md              # Convex backend specialist
-├── article-parser.md              # Content extraction
-└── extension-builder.md           # WXT browser extension
-
-~/code/oculis/.claude/agents/      # Oculis-specific
-├── axe-specialist.md              # Accessibility testing
-├── adapter-guide.md               # DI/Adapter patterns
-└── tdd-builder.md                 # Oculis TDD builder
+┌─────────────────────────────────────────────────────────────┐
+│  USER LEVEL (~/.claude/)                                     │
+│  Foundation shared across ALL projects                       │
+│                                                              │
+│  commands/                                                   │
+│  ├── plan.md              # /plan - Create team plans       │
+│  └── build.md             # /build - Execute plans          │
+│                                                              │
+│  agents/                                                     │
+│  ├── tdd-builder.md       # TDD + lint + type + coverage    │
+│  ├── ts-builder.md        # Lint + type validation          │
+│  ├── ts-validator.md      # Read-only verification          │
+│  ├── turborepo-runner.md  # Monorepo commands               │
+│  ├── coverage-checker.md  # Coverage validation             │
+│  └── team/                                                   │
+│      ├── builder.md       # Generic builder for /build      │
+│      └── validator.md     # Generic validator for /build    │
+│                                                              │
+│  hooks/validators/        # Reusable validation scripts     │
+│  ├── tdd_enforcer.py      # PreToolUse: test-first          │
+│  ├── oxlint_validator.py  # PostToolUse: lint               │
+│  ├── tsc_validator.py     # PostToolUse: types              │
+│  ├── coverage_validator.py # Stop: coverage threshold       │
+│  ├── storybook_validator.py # PostToolUse: stories exist    │
+│  ├── test_methodology_validator.py # PostToolUse: test separation │
+│  ├── validate_new_file.py  # Stop: plan file created        │
+│  └── validate_file_contains.py # Stop: plan sections        │
+└─────────────────────────────────────────────────────────────┘
+                              ↓ extends
+┌─────────────────────────────────────────────────────────────┐
+│  PROJECT LEVEL (~/code/<project>/.claude/)                   │
+│  Domain-specific agents that USE user-level validators       │
+│                                                              │
+│  ~/code/stached/.claude/agents/                              │
+│  ├── convex-builder.md    # Convex + user validators        │
+│  ├── article-parser.md    # Domain knowledge only           │
+│  └── extension-builder.md # WXT + user validators           │
+│                                                              │
+│  ~/code/oculis/.claude/agents/                               │
+│  ├── axe-specialist.md    # A11y + user validators          │
+│  ├── adapter-guide.md     # Read-only guidance              │
+│  └── tdd-builder.md       # TDD + Turborepo commands        │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+### How Project Agents Use User-Level Validators
+
+Project agents reference user-level validators via `~/.claude/hooks/validators/`:
+
+```yaml
+# ~/code/stached/.claude/agents/convex-builder.md
+hooks:
+  PostToolUse:
+    - matcher: "Write|Edit"
+      hooks:
+        # Project-specific validation
+        - type: command
+          command: pnpm --filter @stache/convex type-check
+        # User-level validator (reusable)
+        - type: command
+          command: uv run ~/.claude/hooks/validators/oxlint_validator.py
+```
+
+This pattern allows:
+- **Shared foundation**: Common validators work everywhere
+- **Project specialization**: Add domain-specific commands
+- **Consistent quality**: Same lint/type/TDD rules across projects
 
 ---
 
@@ -116,6 +158,106 @@ Runs `npx tsc --noEmit` on TypeScript files. Blocks if type errors found.
 
 Runs `pnpm test:coverage` and blocks if coverage < 80%.
 
+### Storybook Validator (`storybook_validator.py`)
+**Event**: PostToolUse (Write|Edit)
+
+Checks if new React components have corresponding Storybook stories. Provides warning (or blocks in strict mode) if stories are missing.
+
+### Test Methodology Validator (`test_methodology_validator.py`)
+**Event**: PostToolUse (Write|Edit)
+
+Validates proper test separation between unit tests and interaction tests:
+- Unit tests (`.test.tsx`) for structure/rendering
+- Storybook play functions for user interactions
+
+Warns if story files lack play functions or if unit test files are missing.
+
+---
+
+## Testing Methodology
+
+A critical distinction for UI agents: **unit tests** and **interaction tests** serve different purposes and use different tools.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  UNIT TESTS (.test.tsx / .test.ts)                          │
+│  ├── Purpose: Test component STRUCTURE and RENDERING        │
+│  ├── Tool: Vitest + Testing Library                         │
+│  ├── Environment: jsdom (fast, limited)                     │
+│  └── Tests:                                                 │
+│      ├── Renders without errors                             │
+│      ├── Props applied correctly                            │
+│      ├── Variant classes present                            │
+│      └── Accessibility attributes (roles, aria-*)           │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  STORYBOOK INTERACTION TESTS (play functions)               │
+│  ├── Purpose: Test USER INTERACTIONS in real browser        │
+│  ├── Tool: storybook/test (userEvent, within, expect)       │
+│  ├── Environment: Real browser via Playwright               │
+│  └── Tests:                                                 │
+│      ├── Click interactions                                 │
+│      ├── Keyboard navigation                                │
+│      ├── Focus management                                   │
+│      └── State changes (expanded, selected, etc.)           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why This Matters**: Unit tests run in jsdom which has limitations with real browser behavior. Storybook play functions run in a REAL BROWSER via Playwright, catching issues unit tests miss.
+
+### Test File Mapping
+
+| Test Type | File Pattern | What to Test |
+|-----------|--------------|--------------|
+| Unit | `Component.test.tsx` | Rendering, classes, props, DOM structure |
+| Interaction | `Component.stories.tsx` (play) | Clicks, keyboard, focus, state changes |
+
+---
+
+## UI Agents
+
+The UI layer provides specialized agents for frontend development with design system knowledge.
+
+### User-Level UI Agents
+
+| Agent | Purpose |
+|-------|---------|
+| `ui-builder` | Generic React + Tailwind builder with Motion |
+| `ui-validator` | Read-only validation against design specs |
+
+### Project-Level UI Agents
+
+| Project | Agent | Stack |
+|---------|-------|-------|
+| Stached | `shadcn-builder` | ShadCN/UI + Tailwind v4 + Framer Motion |
+| Oculis | `nuxt-ui-builder` | NuxtUI + Tailwind + Motion-vue |
+
+### UI Validation Flow
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  1. PLANNING: Include design specs in task prompts          │
+│     - Reference component patterns                          │
+│     - Specify animation requirements                        │
+│     - Include accessibility criteria                        │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  2. BUILD: UI builder creates component                     │
+│     - PostToolUse: lint, types, storybook check             │
+│     - Creates component + stories + tests                   │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  3. VALIDATE: UI validator reviews implementation           │
+│     - Design compliance                                     │
+│     - Accessibility (WCAG AA)                               │
+│     - Component patterns                                    │
+│     - Flags issues for self-correction                      │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ---
 
 ## Shared Agents
@@ -173,6 +315,7 @@ Use to check coverage after tests pass.
 | `convex-builder` | Convex backend with type-check gate |
 | `article-parser` | Mozilla Readability, HTML sanitization |
 | `extension-builder` | WXT framework, Manifest V3 |
+| `shadcn-builder` | ShadCN/UI + Tailwind v4 + Framer Motion |
 
 ### Oculis
 
@@ -181,6 +324,7 @@ Use to check coverage after tests pass.
 | `axe-specialist` | WCAG compliance, axe-core |
 | `adapter-guide` | DI/Adapter architecture (read-only) |
 | `tdd-builder` | TDD with Turborepo validation |
+| `nuxt-ui-builder` | NuxtUI + Tailwind + Motion-vue |
 
 ---
 
