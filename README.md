@@ -16,6 +16,8 @@
 - [UserPromptSubmit Hook Deep Dive](#userpromptsubmit-hook-deep-dive)
 - [Claude Code Sub-Agents](#claude-code-sub-agents)
 - [Team-Based Validation System](#team-based-validation-system)
+- [Design-First Workflow](#design-first-workflow)
+- [Global Configuration Sync](#global-configuration-sync)
 - [Output Styles Collection](#output-styles-collection)
 - [Custom Status Lines](#custom-status-lines)
 
@@ -235,11 +237,16 @@ This approach ensures your hooks remain functional across different environments
   - `markdown-focused.md` - Rich markdown features
   - `tts-summary.md` - Audio feedback via TTS
 - `.claude/commands/` - Custom slash commands
+  - `design.md` - Full 4-stage design process (PRD → Clarification → UX Spec → Build Prompts)
   - `prime.md` - Project analysis and understanding
+  - `plan.md` - Create implementation plans
   - `plan_w_team.md` - Team-based build/validate workflow
+  - `build.md` - Execute implementation plans
   - `crypto_research.md` - Cryptocurrency research workflows
   - `cook.md` - Advanced task execution
   - `update_status_line.md` - Dynamic status updates
+- `scripts/` - Utility scripts
+  - `sync-to-user.py` - Sync configuration to ~/.claude/ for global availability
 - `.claude/agents/` - Sub-agent configurations
   - `crypto/` - Cryptocurrency analysis agents
   - `team/` - Team-based workflow agents
@@ -818,6 +825,204 @@ PostToolUse validators automatically enforce code quality:
 - `ruff.toml` - Ruff linter rules
 - `ty.toml` - Type checker settings
 - `.claude/agents/team/` - Team agent definitions
+
+## Design-First Workflow
+
+The `/design` command provides a comprehensive 4-stage design process that transforms rough feature ideas into detailed, build-ready specifications. This addresses the common problem of plans that lack depth regarding how features should work, design language, and brand consistency.
+
+### The Problem with Jumping Straight to Planning
+
+Traditional `/plan` commands jump directly from feature idea to implementation tasks, often missing:
+- **User mental models** - How users think the system works
+- **UX foundations** - Information architecture, affordances, cognitive load
+- **State design** - What users see in empty, loading, error, and success states
+- **Brand consistency** - Existing design tokens, component patterns, assets
+- **Ambiguity resolution** - Unanswered questions that cause rework
+
+### The `/design` Command
+
+```bash
+/design <your feature idea>
+```
+
+Runs a 4-stage process that produces comprehensive specifications:
+
+```mermaid
+flowchart LR
+    A[Feature Idea] --> B[Stage 1: PRD]
+    B --> C[Stage 2: Clarification]
+    C --> D[Stage 3: UX Spec]
+    D --> E[Stage 4: Build Prompts]
+    E --> F[/plan_w_team]
+    F --> G[/build]
+```
+
+### Stage 1: PRD-Lite
+
+**Output:** `specs/<name>-prd.md`
+
+Transforms a rough idea into a structured Product Requirements Document:
+
+| Section | Purpose |
+|---------|---------|
+| One-Sentence Problem | Sharp problem statement: [User] → [Struggle] → [Impact] |
+| Demo Goal | What success looks like, non-goals |
+| Target User | Role, skill level, key constraint |
+| Core Use Case | Single happy-path flow from start to end |
+| Functional Decisions | Required capabilities table (no nice-to-haves) |
+| UX Decisions | Entry point, inputs, outputs, feedback states, errors |
+| Data & Logic | Input sources, processing, output destinations |
+| Brand & Design Context | Existing design tokens, brand assets, component patterns |
+
+**Key addition:** Stage 1 searches the codebase for existing design systems, brand assets, and component libraries to ensure consistency.
+
+### Stage 2: PRD Clarification
+
+**Output:** `specs/<name>-clarification.md`
+
+Systematically eliminates ambiguity through structured questioning:
+
+```bash
+# Depth options
+Quick     →  5 questions   # Critical ambiguities only
+Medium    → 10 questions   # Key requirement areas
+Long      → 20 questions   # Comprehensive review
+Ultralong → 35 questions   # Exhaustive deep-dive
+```
+
+**Question categories covered:**
+- User/stakeholder clarity
+- Functional & non-functional requirements
+- Technical constraints & dependencies
+- Edge cases & error handling
+- Data requirements & business rules
+- Acceptance criteria & scope boundaries
+
+Each question uses `AskUserQuestion` with 2-4 selectable options for efficient clarification.
+
+### Stage 3: PRD to UX Specification
+
+**Output:** `specs/<name>-ux-spec.md`
+
+Transforms the PRD into UX foundations through **6 forced designer mindset passes**:
+
+| Pass | Designer Mindset | Output |
+|------|-----------------|--------|
+| **1. Mental Model** | "What does the user think is happening?" | Primary intent, likely misconceptions |
+| **2. Information Architecture** | "What exists, and how is it organized?" | All concepts, groupings, visibility levels |
+| **3. Affordances** | "What actions are obvious without explanation?" | Action → Signal mapping |
+| **4. Cognitive Load** | "Where will the user hesitate?" | Friction points, simplifications, defaults |
+| **5. State Design** | "How does the system talk back?" | State tables for each element (Empty/Loading/Success/Partial/Error) |
+| **6. Flow Integrity** | "Does this feel inevitable?" | Flow risks, visibility decisions, UX constraints |
+
+**The Iron Law:** No visual specs until all 6 passes are complete. This prevents "pretty but unusable" designs.
+
+### Stage 4: UX Spec to Build Prompts
+
+**Output:** `specs/<name>-build-prompts.md`
+
+Converts the UX spec into sequential, self-contained implementation prompts:
+
+| Phase | What to Include | Why This Order |
+|-------|-----------------|----------------|
+| **1. Foundation** | Design tokens, shared types, base styles | Everything depends on these |
+| **2. Layout Shell** | Page structure, navigation, panels | Container for all features |
+| **3. Core Components** | Primary UI elements | Building blocks |
+| **4. Interactions** | Drag-drop, connections, pickers | Depend on components |
+| **5. States & Feedback** | Empty, loading, error, success | Refinement layer |
+| **6. Polish** | Animations, responsive, edge cases | Final layer |
+
+**Self-containment rules:**
+- Each prompt includes full context (no "see previous prompt")
+- All visual specs, states, and interactions for that feature
+- Explicit constraints on what NOT to include
+
+### Complete Workflow Example
+
+```bash
+# 1. Start the design process
+/design Build a browser extension that lets users save and organize bookmarks with tags
+
+# 2. Claude runs all 4 stages, producing:
+#    - specs/browser-extension-prd.md
+#    - specs/browser-extension-clarification.md
+#    - specs/browser-extension-ux-spec.md
+#    - specs/browser-extension-build-prompts.md
+
+# 3. Create a team plan from the build prompts
+/plan_w_team specs/browser-extension-build-prompts.md
+
+# 4. Execute with agent orchestration
+/build specs/browser-extension-team-plan.md
+```
+
+### When to Use `/design` vs `/plan_w_team`
+
+| Use `/design` when... | Use `/plan_w_team` when... |
+|-----------------------|---------------------------|
+| Building user-facing features | Technical/backend tasks |
+| UX quality matters | Implementation is straightforward |
+| Brand consistency required | No UI components involved |
+| Feature is ambiguous | Requirements are clear |
+| Starting from a rough idea | Starting from a detailed spec |
+
+## Global Configuration Sync
+
+This repository's configuration (hooks, commands, agents, etc.) can be synced to your user-level `~/.claude/` directory to make them available in any project.
+
+### Sync Script
+
+```bash
+# Preview what would be synced (dry-run)
+uv run scripts/sync-to-user.py
+
+# Actually sync (copy files)
+uv run scripts/sync-to-user.py --apply --force
+
+# Use symlinks instead (auto-sync on changes)
+uv run scripts/sync-to-user.py --apply --symlink --force
+
+# Sync only specific components
+uv run scripts/sync-to-user.py --apply --only agents,commands
+```
+
+### Syncable Components
+
+| Component | Description |
+|-----------|-------------|
+| `agents` | Sub-agent definitions |
+| `commands` | Slash commands (`/prime`, `/design`, `/plan_w_team`, etc.) |
+| `hooks` | Lifecycle hook scripts |
+| `output-styles` | Response formatting templates |
+| `status_lines` | Terminal status bar scripts |
+
+### Configuration Hierarchy
+
+Claude Code merges configuration from multiple levels:
+
+1. **Project-level** (`.claude/`) - Highest priority, project-specific
+2. **User-level** (`~/.claude/`) - Available across all projects
+
+After syncing, you can use commands like `/design`, `/plan_w_team`, and `/build` in any project directory.
+
+### Important: Hook Path Configuration
+
+When using hooks globally, ensure `~/.claude/settings.json` uses `~/.claude/` paths (not `$CLAUDE_PROJECT_DIR`):
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{
+      "hooks": [{
+        "type": "command",
+        "command": "uv run ~/.claude/hooks/user_prompt_submit.py --log-only"
+      }]
+    }]
+  }
+}
+```
+
+This ensures hooks work in any project directory, not just this repository.
 
 ## Output Styles Collection
 

@@ -3,7 +3,9 @@
     "allow": [
       "Bash(python3:*)",
       "Bash(python3 -m py_compile:*)",
-      "Bash(uvx ruff check:*)"
+      "Bash(uvx ruff check:*)",
+      "Bash(bun run:*)",
+      "Bash(uvx ty check:*)"
     ]
   }
 }
